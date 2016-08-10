@@ -346,7 +346,7 @@ class StorageBlock : public StorageBlockBase {
   virtual tuple_id bulkInsertPartialTuples(
       const std::vector<attribute_id> &attribute_map,
       ValueAccessor *accessor,
-      tuple_id max_num_tuples_to_insert) = 0;
+      const tuple_id max_num_tuples_to_insert);
 
   /**
    * @brief Update header after a bulkInsertPartialTuples.
@@ -370,7 +370,7 @@ class StorageBlock : public StorageBlockBase {
    **/
   TupleIdSequence* getMatchesForPredicate(const Predicate *predicate,
                                           const TupleIdSequence *filter = nullptr) const;
-
+  
   /**
    * @brief Perform a random sampling of data on  the StorageBlock. The number
    *       of records sampled is determined by the sample percentage in case of
