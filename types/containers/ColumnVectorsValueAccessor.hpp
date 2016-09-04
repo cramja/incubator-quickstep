@@ -138,7 +138,7 @@ class ColumnVectorsValueAccessor : public ValueAccessor {
     // Column Accessors are currently unsupported for this value accessor, hence nullptr.
     return nullptr;
   }
-  
+
   inline std::size_t getNumColumns() const {
     return columns_.size();
   }
