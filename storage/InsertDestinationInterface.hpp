@@ -122,6 +122,27 @@ class InsertDestinationInterface {
       bool always_mark_full = false) = 0;
 
   /**
+   * @brief Bulk-insert tuples from one or more ValueAccessors
+   *        into blocks managed by this InsertDestination.
+   *
+   * @warning It is implicitly assumed that all the input ValueAccessors have
+   *          the same number of tuples in them.
+   *
+   * @param accessor_attribute_map A vector of pairs of ValueAccessor and
+   *        corresponding attribute map
+   *        The i-th attribute ID in the attr map for a value accessor is "n" 
+   *        if the attribute_id "i" in the output relation
+   *        is the attribute_id "n" in corresponding input value accessor.
+   *        Set the i-th element to kInvalidCatalogId if it doesn't come from
+   *        the corresponding value accessor.
+   * @param always_mark_full If \c true, always mark the blocks full after
+   *        insertion from ValueAccessor even when partially full.
+   **/
+  virtual void bulkInsertTuplesFromValueAccessors(
+      const std::vector<std::pair<ValueAccessor *, std::vector<attribute_id>>> &accessor_attribute_map,
+      bool always_mark_full = false) = 0;
+
+  /**
    * @brief Insert tuples from a range of Tuples in a vector.
    * @warning Unlike bulkInsertTuples(), this is not well-optimized and not
    *          intended for general use. It should only be used by

@@ -19,6 +19,7 @@
 
 #include "storage/PackedRowStoreTupleStorageSubBlock.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstring>
 #include <vector>
@@ -137,135 +138,330 @@ std::size_t PackedRowStoreTupleStorageSubBlock::EstimateBytesPerTuple(
          + ((relation.numNullableAttributes() + 7) >> 3);
 }
 
-tuple_id PackedRowStoreTupleStorageSubBlock::bulkInsertTuples(ValueAccessor *accessor) {
-  const tuple_id original_num_tuples = header_->num_tuples;
-  char *dest_addr = static_cast<char*>(tuple_storage_)
-                      + header_->num_tuples * relation_.getFixedByteLength();
-  const unsigned num_nullable_attrs = relation_.numNullableAttributes();
+// Unnamed namespace for helper functions that are implementation details and
+// need not be exposed in the interface of the class (i.e., in the *.hpp file).
+// 
+// The first helper function here is used to provide an optimized bulk insertion path
+// from RowStore to RowStore blocks, where contiguous attributes are copied
+// together. For uniformity, there is another helper function that provides
+// semantically identical `runs` for other input layouts as well.
+namespace {
+// A CopyGroup contains information about ane run of attributes in the source
+// ValueAccessor that can be copied into the output block. The
+// getCopyGroupsForAttributeMap function below takes an attribute map for a source
+// and converts it into a sequence of runs. The goal is to minimize the number
+// of memcpy calls and address calculations that occur during bulk insertion.
+// Contiguous attributes from a rowstore source are merged into a single copy group.
+//
+// A ContiguousAttrs CopyGroup consists of contiguous attributes, nullable or not.
+// "Contiguous" here means that their attribute IDs are successive in both
+// the source and destination relations.
+//
+// A NullAttr refers to exactly one nullable attribute. Nullable columns are
+// represented using fixed length inline data as well as a null bitmap.
+// In a particular tuple, if the attribute has a null value, the inline data
+// has no meaning. So it is safe to copy it or not. We use this fact to merge
+// runs together aggressively, i.e., a ContiguousAttrs group may include a
+// nullable attribute. However, we also create a NullableAttr in that case in
+// order to check the null bitmap.
+//
+// A gap is a run of destination (output) attributes that don't come from a
+// particular source. This occurs during bulkInsertPartialTuples. They must be
+// skipped during the insert (not copied over). They are indicated by a
+// kInvalidCatalogId in the attribute map. For efficiency, the gap size
+// is merged into the bytes_to_advance_ of previous ContiguousAttrs copy group.
+// For gaps at the start of the attribute map, we just create a ContiguousAttrs
+// copy group with 0 bytes to copy and dummy (0) source attribute id.
+// 
+// eg. For 4B integer attrs, from a row store source,
+// if the input attribute_map is {-1,0,5,6,7,-1,2,4,9,10,-1}
+// with input/output attributes 4 and 7 being nullable,
+// we will create the following ContiguousAttrs copy groups
+//
+//  ----------------------------------------------------
+//  |source_attr_id_| bytes_to_copy_| bytes_to_advance_|
+//  |---------------|---------------|------------------|
+//  |              0|              0|                 4|
+//  |              0|              4|                 4|
+//  |              5|             12|                16|
+//  |              2|              4|                 4|
+//  |              4|              4|                 4|
+//  |              9|              8|                12|
+//  ----------------------------------------------------
+// and two NullableAttrs with source_attr_id_ set to 4 and 7.
+//
+// In this example, we do 6 memcpy calls and 6 address calculations
+// as well as 2 bitvector lookups for each tuple. A naive copy algorithm
+// would do 11 memcpy calls and address calculations, along with the
+// bitvector lookups, not to mention the schema lookups,
+// all interspersed in a complex loop with lots of branches.
+//
+// If the source was a column store, then we can't merge contiguous
+// attributes (or gaps). So we would have 11 ContigousAttrs copy groups with
+// three of them having bytes_to_copy = 0 (corresponding to the gaps) and 
+// the rest having bytes_to_copy_ = 4.
+// 
+// All of these CopyGroups are collected together into a CopyGroupList for
+// convenience and efficiency.
+// 
+struct CopyGroup {
+  attribute_id source_attr_id_;  // attr_id of starting input attribute for run
 
-  InvokeOnAnyValueAccessor(
-      accessor,
-      [this, &dest_addr, &num_nullable_attrs](auto *accessor) -> void {  // NOLINT(build/c++11)
-    const std::size_t num_attrs = relation_.size();
-    const std::vector<std::size_t> &attrs_max_size =
-        relation_.getMaximumAttributeByteLengths();
+  CopyGroup(const attribute_id source_attr_id) : source_attr_id_(source_attr_id) {};
+};
 
-    if (num_nullable_attrs != 0) {
-      while (this->hasSpaceToInsert<true>(1) && accessor->next()) {
-        for (std::size_t curr_attr = 0; curr_attr < num_attrs; ++curr_attr) {
-          const std::size_t attr_size = attrs_max_size[curr_attr];
-          const attribute_id nullable_idx = relation_.getNullableAttributeIndex(curr_attr);
-          // If this attribute is nullable, check for a returned null value.
-          if (nullable_idx != kInvalidCatalogId) {
-            const void *attr_value
-                = accessor->template getUntypedValue<true>(curr_attr);
-            if (attr_value == nullptr) {
-              null_bitmap_->setBit(
-                  header_->num_tuples * num_nullable_attrs + nullable_idx,
-                  true);
-            } else {
-              memcpy(dest_addr, attr_value, attr_size);
-            }
-          } else {
-            memcpy(dest_addr,
-                   accessor->template getUntypedValue<false>(curr_attr),
-                   attr_size);
-          }
-          dest_addr += attr_size;
-        }
-        ++(header_->num_tuples);
-      }
-    } else {
-      // If the accessor is from a packed row store, we can optimize the
-      // memcpy by avoiding iterating over each attribute.
-      const bool fast_copy =
-          (accessor->getImplementationType() ==
-              ValueAccessor::Implementation::kCompressedPackedRowStore);
-      const std::size_t attrs_total_size = relation_.getMaximumByteLength();
-      while (this->hasSpaceToInsert<false>(1) && accessor->next()) {
-        if (fast_copy) {
-          memcpy(dest_addr,
-                 accessor->template getUntypedValue<false>(0),
-                 attrs_total_size);
-        } else {
-          for (std::size_t curr_attr = 0; curr_attr < num_attrs; ++curr_attr) {
-            const std::size_t attr_size = attrs_max_size[curr_attr];
-            memcpy(dest_addr,
-                   accessor->template getUntypedValue<false>(curr_attr),
-                   attr_size);
-            dest_addr += attr_size;
-          }
-        }
-        ++(header_->num_tuples);
-      }
+struct ContiguousAttrs : public CopyGroup {
+  std::size_t bytes_to_copy_;    // Number of bytes to copy from source
+  std::size_t bytes_to_advance_; // Number of bytes to advance destination ptr
+
+  ContiguousAttrs(
+      const std::vector<attribute_id> &attribute_map,
+      const std::vector<std::size_t> &my_attrs_max_size,
+      const attribute_id my_start_attr_id,
+      const attribute_id num_contiguous_attrs,
+      const attribute_id num_gap_attrs)
+      : CopyGroup(attribute_map[my_start_attr_id]) {
+    // Accumulate number of bytes to copy for contiguous attrs.
+    bytes_to_copy_ = 0;
+    for (attribute_id i = 0; i < num_contiguous_attrs; ++i) {
+      bytes_to_copy_ += my_attrs_max_size[my_start_attr_id + i];
     }
-  });
 
-  return header_->num_tuples - original_num_tuples;
+    // Accumulate number of bytes to skip for gap attrs.
+    bytes_to_advance_ = bytes_to_copy_;
+    const attribute_id my_gap_start_attr_id = my_start_attr_id + num_contiguous_attrs;
+    for (attribute_id i = 0; i < num_gap_attrs; ++i) {
+      bytes_to_advance_ += my_attrs_max_size[my_gap_start_attr_id + i];
+    }
+  }
+};
+
+struct NullableAttr : public CopyGroup {
+  int nullable_attr_idx_;        // index into null bitmap
+
+  NullableAttr(
+      const std::vector<attribute_id> &attribute_map,
+      const attribute_id my_attr_id,
+      const int my_nullable_attr_idx)
+      : CopyGroup(attribute_map[my_attr_id]),
+        nullable_attr_idx_(my_nullable_attr_idx) {};
+};
+
+struct CopyGroupList {
+  std::vector<ContiguousAttrs> contiguous_attrs_;
+  std::vector<NullableAttr> nullable_attrs_;
+
+  CopyGroupList(std::vector<ContiguousAttrs> &contiguous_attrs,
+                std::vector<NullableAttr> &nullable_attrs)
+      : contiguous_attrs_(contiguous_attrs),
+        nullable_attrs_(nullable_attrs) {};
+
+  CopyGroupList(const std::size_t num_elems) {
+    contiguous_attrs_.reserve(num_elems);
+    nullable_attrs_.reserve(num_elems);
+  }
+};
+
+template <bool has_nullable_attrs>
+bool isNullable(const CatalogRelationSchema &relation,
+                const attribute_id attr_id, int &my_null_idx) {
+  if (!has_nullable_attrs)
+    return false;
+  my_null_idx = relation.getNullableAttributeIndex(attr_id);
+  return my_null_idx != kInvalidCatalogId;
 }
 
-tuple_id PackedRowStoreTupleStorageSubBlock::bulkInsertTuplesWithRemappedAttributes(
+
+// This helper function examines the schema of the input and output blocks
+// and determines runs of attributes that can be copied at once.
+// has_nullable_attrs: Check and break runs when there are nullable attributes.
+//                     Caller should set based on relation schema.
+// has_gaps: Check and break runs when there are gaps.
+//           Caller should set this when there is more than one source ValueAccessor.
+// merge_contiguous_attrs: Successive attribute IDs are merged into one run.
+//                         Caller should set this when source is a row store.
+template <bool has_nullable_attrs, bool has_gaps, bool merge_contiguous_attrs>
+void getCopyGroupsForAttributeMap(
+    const CatalogRelationSchema &my_relation,
     const std::vector<attribute_id> &attribute_map,
-    ValueAccessor *accessor) {
+    const std::vector<std::size_t> &my_attrs_max_size,
+    CopyGroupList &copy_groups) {
+  attribute_id num_attrs = attribute_map.size();
+  std::size_t my_attr = 0;
+  int my_null_idx = kInvalidCatalogId;
+
+  // First handle a starting gap copy group. Note that we can merge
+  // gaps irrespective of merge_contiguous_attrs because the source layout
+  // doesn't matter since we don't copy any data.
+  if (has_gaps) {
+    // Find a run of gaps
+    while (my_attr < num_attrs && attribute_map[my_attr] == kInvalidCatalogId)
+      ++my_attr;
+
+    // Create ContiguousAttrs with source_attr_id_ = 0 and bytes_to_copy_ = 0
+    if (my_attr > 0) {
+        copy_groups.contiguous_attrs_.push_back(ContiguousAttrs(
+            attribute_map, my_attrs_max_size, 0, 0, my_attr));
+    }
+  }
+
+  // Starting with my_attr set to the first non-gap attribute,
+  // scan attribute_map to find contiguous runs.
+  while (my_attr < num_attrs) {
+    const attribute_id run_start = my_attr;
+    ++my_attr;
+    if (merge_contiguous_attrs) {
+      while (my_attr < num_attrs
+            && attribute_map[my_attr] == 1 + attribute_map[my_attr-1])
+        ++my_attr;
+    }
+    // my_attr should now be 1 beyond list of contiguous attributes to merge
+    // Identify any following gaps that can be merged
+    const attribute_id gap_start = my_attr;
+    if (has_gaps) {
+      while (my_attr < num_attrs
+             && attribute_map[my_attr] == kInvalidCatalogId)
+        ++my_attr;
+    }
+
+    // Create a copy group with the details above
+    copy_groups.contiguous_attrs_.push_back(ContiguousAttrs(
+        attribute_map,
+        my_attrs_max_size,
+        run_start,             // index into the attribute_map for source_attr_id
+        gap_start - run_start, // number of contiguous attributes to merge
+        my_attr - gap_start)); // number of gap attributes to merge
+
+    // Create NullableAttrs for nullable attrs in this ContiguousAttrs copy group
+    for (attribute_id a = run_start; a < gap_start; ++a) {
+      if (isNullable<has_nullable_attrs>(my_relation, a, my_null_idx))
+        copy_groups.nullable_attrs_.push_back(
+            NullableAttr(attribute_map, a, my_null_idx));
+    }
+  } // end while loop through attribute map
+}
+
+} // end Unnamed Namespace
+
+template <bool has_nullable_attrs,
+          bool has_gaps,
+          bool merge_contiguous_attrs>
+tuple_id PackedRowStoreTupleStorageSubBlock::bulkInsertTuplesHelper(
+    const std::vector<attribute_id> &attribute_map,
+    ValueAccessor *accessor,
+    const tuple_id max_num_tuples_to_insert) {
   DEBUG_ASSERT(attribute_map.size() == relation_.size());
 
-  const tuple_id original_num_tuples = header_->num_tuples;
-  char *dest_addr = static_cast<char*>(tuple_storage_)
-                      + header_->num_tuples * relation_.getFixedByteLength();
+  tuple_id num_tuples_inserted = 0;
+  char *dest_addr = static_cast<char *>(tuple_storage_) +
+                    header_->num_tuples * relation_.getFixedByteLength();
   const unsigned num_nullable_attrs = relation_.numNullableAttributes();
+  const std::vector<std::size_t> &my_attrs_max_size =
+      relation_.getMaximumAttributeByteLengths();
+
+  CopyGroupList copy_groups(attribute_map.size());
+  getCopyGroupsForAttributeMap<has_nullable_attrs, has_gaps, merge_contiguous_attrs>
+      (relation_, attribute_map, my_attrs_max_size, copy_groups);
 
   InvokeOnAnyValueAccessor(
-      accessor,
-      [this, &num_nullable_attrs, &attribute_map, &dest_addr](auto *accessor) -> void {  // NOLINT(build/c++11)
-    const std::size_t num_attrs = relation_.size();
-    const std::vector<std::size_t> &attrs_max_size =
-        relation_.getMaximumAttributeByteLengths();
-
-    if (num_nullable_attrs != 0) {
-      while (this->hasSpaceToInsert<true>(1) && accessor->next()) {
-        for (std::size_t curr_attr = 0; curr_attr < num_attrs; ++curr_attr) {
-          const std::size_t attr_size = attrs_max_size[curr_attr];
-          const attribute_id nullable_idx = relation_.getNullableAttributeIndex(curr_attr);
-          // If this attribute is nullable, check for a returned null value.
-          if (nullable_idx != kInvalidCatalogId) {
-            const void *attr_value
-                = accessor->template getUntypedValue<true>(attribute_map[curr_attr]);
-            if (attr_value == nullptr) {
-              null_bitmap_->setBit(
-                  header_->num_tuples * num_nullable_attrs + nullable_idx,
-                  true);
-            } else {
-              memcpy(dest_addr, attr_value, attr_size);
-            }
-          } else {
-            memcpy(dest_addr,
-                   accessor->template getUntypedValue<false>(attribute_map[curr_attr]),
-                   attr_size);
+    accessor,
+    [&] (auto *accessor) -> void {  // NOLINT(build/c++11)
+      const tuple_id num_tuples_to_insert = std::min(
+          estimateNumTuplesInsertable<has_nullable_attrs>(),
+          max_num_tuples_to_insert);
+      while(num_tuples_inserted < num_tuples_to_insert
+            && !accessor->iterationFinished()) {
+        accessor->next();
+        for (auto &run : copy_groups.contiguous_attrs_) {
+          if (run.bytes_to_copy_ > 0) {
+            const void *attr_value =
+              accessor->template getUntypedValue<false>(run.source_attr_id_);
+            memcpy(dest_addr, attr_value, run.bytes_to_copy_);
           }
-          dest_addr += attr_size;
+          dest_addr += run.bytes_to_advance_;
         }
-        ++(header_->num_tuples);
-      }
-    } else {
-      while (this->hasSpaceToInsert<false>(1) && accessor->next()) {
-        for (std::size_t curr_attr = 0; curr_attr < num_attrs; ++curr_attr) {
-          const std::size_t attr_size = attrs_max_size[curr_attr];
-          memcpy(dest_addr,
-                 accessor->template getUntypedValue<false>(attribute_map[curr_attr]),
-                 attr_size);
-          dest_addr += attr_size;
+        if (has_nullable_attrs) {
+          for (auto &nullable_attr : copy_groups.nullable_attrs_) {
+            // Does the nullable attribute have null value?
+            // TODO: There should be an isNullValue() method on ValueAccessors.
+            const void *attr_value =
+                accessor->template getUntypedValue<true>(nullable_attr.source_attr_id_);
+            if (attr_value == nullptr)
+              this->null_bitmap_->setBit(
+                  (this->header_->num_tuples + num_tuples_inserted) * num_nullable_attrs
+                  + nullable_attr.nullable_attr_idx_,
+                  true);
+          }
         }
-        ++(header_->num_tuples);
-      }
-    }
-  });
+        ++num_tuples_inserted;
+      }; // end while loop: inserted one tuple
+    });  // end lambda: argument to InvokeOnAnyValueAccessor
 
-  return header_->num_tuples - original_num_tuples;
+  if (!has_gaps)
+    header_->num_tuples += num_tuples_inserted;
+  return num_tuples_inserted;
 }
 
-const void* PackedRowStoreTupleStorageSubBlock::getAttributeValue(
-    const tuple_id tuple,
-    const attribute_id attr) const {
+template <bool has_gaps> tuple_id
+PackedRowStoreTupleStorageSubBlock::bulkInsertTuplesDispatcher(
+    const std::vector<attribute_id> &attribute_map,
+    ValueAccessor *accessor,
+    const tuple_id max_num_tuples_to_insert) {
+  const bool has_nullable_attrs = (relation_.numNullableAttributes() > 0);
+  auto impl = accessor->getImplementationType();
+  const bool is_rowstore_source =
+      (impl == ValueAccessor::Implementation::kPackedRowStore ||
+       impl == ValueAccessor::Implementation::kSplitRowStore);
+
+  if (has_nullable_attrs) {
+      if (is_rowstore_source)
+        return bulkInsertTuplesHelper<1,has_gaps,1>(
+            attribute_map, accessor, max_num_tuples_to_insert);
+      else
+        return bulkInsertTuplesHelper<1,has_gaps,0>(
+            attribute_map, accessor, max_num_tuples_to_insert);
+    }
+    else {
+      if (is_rowstore_source)
+        return bulkInsertTuplesHelper<0,has_gaps,1>(
+            attribute_map, accessor, max_num_tuples_to_insert);
+      else
+        return bulkInsertTuplesHelper<0,has_gaps,0>(
+            attribute_map, accessor, max_num_tuples_to_insert);
+    }
+}
+
+tuple_id
+PackedRowStoreTupleStorageSubBlock::bulkInsertTuples(ValueAccessor *accessor) {
+  // Create a dummy attribute map and call bulkInsertTuples.
+  std::vector<attribute_id> attribute_map;
+  const attribute_id num_attrs = relation_.size();
+  attribute_map.reserve(num_attrs);
+  for (attribute_id i = 0; i < num_attrs; ++i)
+    attribute_map.push_back(i);
+
+  return bulkInsertTuplesWithRemappedAttributes(attribute_map, accessor);
+}
+
+tuple_id
+PackedRowStoreTupleStorageSubBlock::bulkInsertTuplesWithRemappedAttributes(
+    const std::vector<attribute_id> &attribute_map, ValueAccessor *accessor) {
+  // This function does not permit an attribute_map containing gaps.
+  return bulkInsertTuplesDispatcher<false>(
+      attribute_map, accessor, kCatalogMaxID);
+}
+
+tuple_id PackedRowStoreTupleStorageSubBlock::bulkInsertPartialTuples(
+    const std::vector<attribute_id> &attribute_map,
+    ValueAccessor *accessor,
+    const tuple_id max_num_tuples_to_insert) {
+  return bulkInsertTuplesDispatcher<true>(
+      attribute_map, accessor, max_num_tuples_to_insert);
+}
+
+
+const void *PackedRowStoreTupleStorageSubBlock::getAttributeValue(
+    const tuple_id tuple, const attribute_id attr) const {
   DEBUG_ASSERT(hasTupleWithID(tuple));
   DEBUG_ASSERT(relation_.hasAttributeWithId(attr));
 
@@ -424,6 +620,23 @@ bool PackedRowStoreTupleStorageSubBlock::bulkDeleteTuples(TupleIdSequence *tuple
 
   return true;
 }
+
+template <bool nullable_attrs>
+tuple_id PackedRowStoreTupleStorageSubBlock::estimateNumTuplesInsertable() const{
+  std::size_t tuple_size = relation_.getFixedByteLength();
+  std::size_t remaining_subblock_bytes = sub_block_memory_size_
+                                         - sizeof(PackedRowStoreHeader)
+                                         - null_bitmap_bytes_
+                                         - header_->num_tuples * tuple_size;
+  tuple_id est_num_tuples = remaining_subblock_bytes/tuple_size;
+  if (nullable_attrs) {
+    tuple_id remaining_null_bitmap_bits = null_bitmap_->size()
+                                          - header_->num_tuples;
+    return std::min(est_num_tuples, remaining_null_bitmap_bits);
+  } 
+  return est_num_tuples;
+}
+
 
 template <bool nullable_attrs>
 bool PackedRowStoreTupleStorageSubBlock::hasSpaceToInsert(const tuple_id num_tuples) const {
