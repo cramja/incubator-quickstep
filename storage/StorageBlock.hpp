@@ -312,7 +312,7 @@ class StorageBlock : public StorageBlockBase {
    **/
   tuple_id bulkInsertTuplesWithRemappedAttributes(
       const std::vector<attribute_id> &attribute_map,
-      ValueAccessor *accessor); 
+      ValueAccessor *accessor);
 
   /**
    * @brief Insert up to max_num_tuples_to_insert tuples from a ValueAccessor
@@ -343,7 +343,7 @@ class StorageBlock : public StorageBlockBase {
    *        position.
    * @return The number of tuples inserted from accessor.
    **/
-  virtual tuple_id bulkInsertPartialTuples(
+   tuple_id bulkInsertPartialTuples(
       const std::vector<attribute_id> &attribute_map,
       ValueAccessor *accessor,
       const tuple_id max_num_tuples_to_insert);
@@ -358,7 +358,7 @@ class StorageBlock : public StorageBlockBase {
    *        advance the header.num_tuples by). Should be equal to the return
    *        value of bulkInsertPartialTuples.
    **/
-  virtual void bulkInsertPartialTuplesFinalize(tuple_id num_tuples_inserted) = 0;
+  void bulkInsertPartialTuplesFinalize(tuple_id num_tuples_inserted);
 
   /**
    * @brief Get the IDs of tuples in this StorageBlock which match a given Predicate.

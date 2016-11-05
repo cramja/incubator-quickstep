@@ -287,7 +287,7 @@ void getCopyGroupsForAttributeMap(
     const std::vector<std::size_t> &my_attrs_max_size,
     CopyGroupList &copy_groups) {
   attribute_id num_attrs = attribute_map.size();
-  std::size_t my_attr = 0;
+  attribute_id my_attr = 0;
   int my_null_idx = kInvalidCatalogId;
 
   // First handle a starting gap copy group. Note that we can merge
@@ -367,7 +367,7 @@ tuple_id PackedRowStoreTupleStorageSubBlock::bulkInsertTuplesHelper(
     accessor,
     [&] (auto *accessor) -> void {  // NOLINT(build/c++11)
       const tuple_id num_tuples_to_insert = std::min(
-          estimateNumTuplesInsertable<has_nullable_attrs>(),
+          this->estimateNumTuplesInsertable<has_nullable_attrs>(),
           max_num_tuples_to_insert);
       while(num_tuples_inserted < num_tuples_to_insert
             && !accessor->iterationFinished()) {
