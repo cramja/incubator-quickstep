@@ -544,12 +544,23 @@ void HashInnerJoinWorkOrder::execute() {
           ordered_build_accessor.reset(
               accessor->createSharedOrderedTupleIdSequenceAdapter(build_tids));
         });
-    InvokeOnValueAccessorNotAdapter(
+
+    if (probe_accessor->isTupleIdSequenceAdapter()) {
+      InvokeOnTupleIdSequenceAdapterValueAccessor(
         probe_accessor.get(),
         [&](auto *accessor) -> void {  // NOLINT(build/c++11)
           ordered_probe_accessor.reset(
-              accessor->createSharedOrderedTupleIdSequenceAdapter(probe_tids));
+            accessor->createSharedOrderedTupleIdSequenceAdapter(probe_tids));
         });
+    } else {
+      InvokeOnValueAccessorNotAdapter(
+        probe_accessor.get(),
+        [&](auto *accessor) -> void {  // NOLINT(build/c++11)
+          ordered_probe_accessor.reset(
+            accessor->createSharedOrderedTupleIdSequenceAdapter(probe_tids));
+        });
+    }
+
 
     // We also need a temp value accessor to store results of any scalar expressions.
     ColumnVectorsValueAccessor temp_result;
