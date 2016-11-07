@@ -154,11 +154,7 @@ StorageBlockLayout* StorageBlockLayout::GenerateDefaultLayout(const CatalogRelat
   description->set_num_slots(1);
 
   TupleStorageSubBlockDescription *tuple_store_description = description->mutable_tuple_store_description();
-  if (relation_variable_length) {
-    tuple_store_description->set_sub_block_type(TupleStorageSubBlockDescription::SPLIT_ROW_STORE);
-  } else {
-    tuple_store_description->set_sub_block_type(TupleStorageSubBlockDescription::PACKED_ROW_STORE);
-  }
+  tuple_store_description->set_sub_block_type(TupleStorageSubBlockDescription::SPLIT_ROW_STORE);
 
   layout->finalize();
   return layout;
