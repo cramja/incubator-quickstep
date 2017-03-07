@@ -1,0 +1,4 @@
+43c43
+< static const bool tmb_receive_poll_interval_dummy = gflags::RegisterFlagValidator(
+---
+> static volatile const bool tmb_receive_poll_interval_dummy = gflags::RegisterFlagValidator(

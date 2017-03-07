@@ -105,6 +105,11 @@ patch ${THIRD_PARTY_SRC_DIR}/gflags/src/gflags_reporting.cc ${PATCH_DIR}/gflags/
 # Apply re2 patch.
 patch ${THIRD_PARTY_SRC_DIR}/re2/CMakeLists.txt ${PATCH_DIR}/re2/re2CMake.patch
 
+# Apply tmb patch.
+if ! patch -R --dry-run ${THIRD_PARTY_SRC_DIR}/tmb/src/message_bus.cc ${PATCH_DIR}/tmb/message_bus.cc.patch; then
+  patch ${THIRD_PARTY_SRC_DIR}/tmb/src/message_bus.cc ${PATCH_DIR}/tmb/message_bus.cc.patch
+fi
+
 # Apply benchmark patches.
 patch ${THIRD_PARTY_SRC_DIR}/benchmark/CMakeLists.txt ${PATCH_DIR}/benchmark/benchmarkCMake.patch
 patch ${THIRD_PARTY_SRC_DIR}/benchmark/src/CMakeLists.txt ${PATCH_DIR}/benchmark/benchmarkSrcCMakeLists.patch
