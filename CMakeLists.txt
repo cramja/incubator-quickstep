@@ -792,3 +792,40 @@ if (ENABLE_DISTRIBUTED)
                         ${GFLAGS_LIB_NAME}
                         ${GRPCPLUSPLUS_LIBRARIES})
 endif(ENABLE_DISTRIBUTED)
+
+# Build the quickstep_cli_shell executable.
+add_executable (quickstep_server cli/QuickstepServer.cpp)
+# Link against direct deps (will transitively pull in everything needed).
+target_link_libraries(quickstep_server
+        ${GFLAGS_LIB_NAME}
+        glog
+        quickstep_catalog_CatalogRelation
+        quickstep_cli_CommandExecutor
+        quickstep_cli_DefaultsConfigurator
+        quickstep_cli_DropRelation
+        quickstep_cli_Flags
+        quickstep_cli_InputParserUtil
+        quickstep_cli_LineReader
+        quickstep_cli_NetworkWrapper
+        quickstep_cli_PrintToScreen
+        quickstep_parser_ParseStatement
+        quickstep_parser_SqlParserWrapper
+        quickstep_queryexecution_ForemanSingleNode
+        quickstep_queryexecution_QueryContext
+        quickstep_queryexecution_QueryExecutionTypedefs
+        quickstep_queryexecution_QueryExecutionUtil
+        quickstep_queryexecution_Worker
+        quickstep_queryexecution_WorkerDirectory
+        quickstep_queryoptimizer_QueryHandle
+        quickstep_queryoptimizer_QueryProcessor
+        quickstep_storage_Flags
+        quickstep_storage_PreloaderThread
+        quickstep_storage_StorageConstants
+        quickstep_storage_StorageManager
+        quickstep_threading_ThreadIDBasedMap
+        quickstep_utility_ExecutionDAGVisualizer
+        quickstep_utility_Macros
+        quickstep_utility_MemStream
+        quickstep_utility_PtrVector
+        quickstep_utility_SqlError
+        quickstep_utility_StringUtil)

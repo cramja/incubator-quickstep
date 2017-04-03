@@ -67,6 +67,7 @@ else()
               LineReaderDumb.hpp)
 endif()
 
+add_library(quickstep_cli_NetworkWrapper NetworkWrapper.cpp NetworkWrapper.hpp)
 add_library(quickstep_cli_PrintToScreen PrintToScreen.cpp PrintToScreen.hpp)
 
 # Link dependencies:
@@ -151,6 +152,8 @@ else()
   target_link_libraries(quickstep_cli_LineReader
                         quickstep_utility_Macros)
 endif()
+target_link_libraries(quickstep_cli_PrintToScreen
+        ${GFLAGS_LIB_NAME})
 target_link_libraries(quickstep_cli_PrintToScreen
                       ${GFLAGS_LIB_NAME}
                       quickstep_catalog_CatalogAttribute
