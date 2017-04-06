@@ -34,8 +34,19 @@ using std::string;
 
 namespace quickstep {
 
-  NetworkWrapper::NetworkWrapper(int port)
-    : port_(port),
+  static bool ValidatePort(const char *flagname, std::int32_t value) {
+    if (value >= 0 && value < 32768)
+      return true;
+    printf("Invalid value for --%s: %d\n", flagname, (int) value);
+    return false;
+  }
+
+  DEFINE_int32(port, 3000, "Listens for TCP connection on this port.");
+  DEFINE_validator(port, &ValidatePort);
+
+  TCPWrapper::TCPWrapper(int port)
+    : NetworkWrapper(),
+      port_(port),
       open_connection_(false),
       server_addr_(),
       client_addr_(),
@@ -54,7 +65,7 @@ namespace quickstep {
     if ((error_code = bind(socket_fd_, (struct sockaddr *) &server_addr_, sizeof(server_addr_))) < 0) {
       CHECK(false) << "error on binding to port, code " << error_code;
     } else {
-      LOG(INFO) << "listening on " << server_addr_.sin_addr.s_addr << ":" << server_addr_.sin_port;
+      LOG(INFO) << "Listening on port " << port_;
     }
 
     int const MAX_WAITERS = 5; // maximum number of processes that can wait on a socket
@@ -62,19 +73,19 @@ namespace quickstep {
     CHECK(error_code == 0) << "error on listen call, code " << error_code;
   }
 
-  NetworkWrapper::~NetworkWrapper() {
+  TCPWrapper::~TCPWrapper() {
     close(socket_fd_);
   }
 
-  std::string NetworkWrapper::getNextCommand() {
+  std::string TCPWrapper::getNextCommand() {
     CHECK(!open_connection_) << "call to get next command when a client request in flight";
     open_connection_ = true;
 
     socklen_t client_len = sizeof(client_addr_);
-    // accept a connection. Blocks until a connection is made.
+    // Accept a connection. Blocks until a connection is made.
     client_socket_fd_ = accept(socket_fd_,
-                       (struct sockaddr *) &client_addr_,
-                       &client_len);
+                               (struct sockaddr *) &client_addr_,
+                               &client_len);
     CHECK(client_socket_fd_ > 0) << "error on accepting connection, code: " << client_socket_fd_;
 
     int const BUFF_SIZE = 4096;
@@ -89,7 +100,7 @@ namespace quickstep {
     return message;
   }
 
-  void NetworkWrapper::returnResult(std::string result) {
+  void TCPWrapper::returnResult(std::string result) {
     CHECK(open_connection_);
     ssize_t bytes_written = write(client_socket_fd_, result.c_str(), result.length());
     CHECK(bytes_written == result.length()) << "error writing to client, code: " << bytes_written;
@@ -99,5 +110,18 @@ namespace quickstep {
 
     open_connection_ = false;
   }
+
+
+GrpcWrapper::GrpcWrapper(int port) : NetworkWrapper() {
+
+}
+
+GrpcWrapper::~GrpcWrapper() {}
+
+void GrpcWrapper::returnResult(std::string result) {}
+
+std::string GrpcWrapper::getNextCommand() {
+  return "";
+}
 
 }  // namespace quickstep

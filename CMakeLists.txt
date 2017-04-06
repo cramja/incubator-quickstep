@@ -145,6 +145,7 @@ if (ENABLE_VECTOR_PREDICATE_SHORT_CIRCUIT)
   )
 endif()
 
+option(ENABLE_SINGLE_NODE_SERVER "Enables server mode in single node setting" ON)
 option(ENABLE_DISTRIBUTED "Use the distributed version of Quickstep" OFF)
 
 macro (set_gflags_lib_name)
@@ -685,7 +686,8 @@ set(ENABLE_MEMORYMIRROR OFF CACHE BOOL "Enable MemoryMirror TMB")
 set(ENABLE_NATIVELOG OFF CACHE BOOL "Enable NativeLog TMB")
 
 # The distributed version requires to use the NativeNet implementation.
-if (NOT ENABLE_DISTRIBUTED)
+# Single node server also requires this to be built for its dependency, gRPC.
+if (NOT ENABLE_DISTRIBUTED AND NOT ENABLE_SINGLE_NODE_SERVER)
   set(ENABLE_NATIVENET OFF CACHE BOOL "Enable NativeNet TMB")
 endif()
 
@@ -696,7 +698,8 @@ set(ENABLE_ZOOKEEPER OFF CACHE BOOL "Enable Zookeeper TMB")
 add_subdirectory("${THIRD_PARTY_SOURCE_DIR}/tmb" "${CMAKE_CURRENT_BINARY_DIR}/third_party/tmb")
 include_directories(${TMB_INCLUDE_DIRS})
 
-if (ENABLE_DISTRIBUTED)
+# Single node server requires this for gRPC headers
+if (ENABLE_DISTRIBUTED OR ENABLE_SINGLE_NODE_SERVER)
   include_directories(${CMAKE_CURRENT_BINARY_DIR}/third_party/tmb/include)
 endif()
 
@@ -793,39 +796,46 @@ if (ENABLE_DISTRIBUTED)
                         ${GRPCPLUSPLUS_LIBRARIES})
 endif(ENABLE_DISTRIBUTED)
 
-# Build the quickstep_cli_shell executable.
-add_executable (quickstep_server cli/QuickstepServer.cpp)
-# Link against direct deps (will transitively pull in everything needed).
-target_link_libraries(quickstep_server
-        ${GFLAGS_LIB_NAME}
-        glog
-        quickstep_catalog_CatalogRelation
-        quickstep_cli_CommandExecutor
-        quickstep_cli_DefaultsConfigurator
-        quickstep_cli_DropRelation
-        quickstep_cli_Flags
-        quickstep_cli_InputParserUtil
-        quickstep_cli_LineReader
-        quickstep_cli_NetworkWrapper
-        quickstep_cli_PrintToScreen
-        quickstep_parser_ParseStatement
-        quickstep_parser_SqlParserWrapper
-        quickstep_queryexecution_ForemanSingleNode
-        quickstep_queryexecution_QueryContext
-        quickstep_queryexecution_QueryExecutionTypedefs
-        quickstep_queryexecution_QueryExecutionUtil
-        quickstep_queryexecution_Worker
-        quickstep_queryexecution_WorkerDirectory
-        quickstep_queryoptimizer_QueryHandle
-        quickstep_queryoptimizer_QueryProcessor
-        quickstep_storage_Flags
-        quickstep_storage_PreloaderThread
-        quickstep_storage_StorageConstants
-        quickstep_storage_StorageManager
-        quickstep_threading_ThreadIDBasedMap
-        quickstep_utility_ExecutionDAGVisualizer
-        quickstep_utility_Macros
-        quickstep_utility_MemStream
-        quickstep_utility_PtrVector
-        quickstep_utility_SqlError
-        quickstep_utility_StringUtil)
+if(ENABLE_SINGLE_NODE_SERVER)
+  add_executable (quickstep_client cli/QuickstepClient.cpp)
+  add_executable (quickstep_server cli/QuickstepServer.cpp)
+  target_link_libraries(quickstep_server
+          ${GFLAGS_LIB_NAME}
+          ${GRPCPLUSPLUS_LIBRARIES}
+          glog
+          quickstep_catalog_CatalogRelation
+          quickstep_cli_CommandExecutor
+          quickstep_cli_DefaultsConfigurator
+          quickstep_cli_DropRelation
+          quickstep_cli_Flags
+          quickstep_cli_InputParserUtil
+          quickstep_cli_LineReader
+          quickstep_cli_NetworkWrapper
+          quickstep_cli_PrintToScreen
+          quickstep_parser_ParseStatement
+          quickstep_parser_SqlParserWrapper
+          quickstep_queryexecution_ForemanSingleNode
+          quickstep_queryexecution_QueryContext
+          quickstep_queryexecution_QueryExecutionTypedefs
+          quickstep_queryexecution_QueryExecutionUtil
+          quickstep_queryexecution_Worker
+          quickstep_queryexecution_WorkerDirectory
+          quickstep_queryoptimizer_QueryHandle
+          quickstep_queryoptimizer_QueryProcessor
+          quickstep_storage_Flags
+          quickstep_storage_PreloaderThread
+          quickstep_storage_StorageConstants
+          quickstep_storage_StorageManager
+          quickstep_threading_ThreadIDBasedMap
+          quickstep_utility_ExecutionDAGVisualizer
+          quickstep_utility_Macros
+          quickstep_utility_MemStream
+          quickstep_utility_PtrVector
+          quickstep_utility_SqlError
+          quickstep_utility_StringUtil)
+    target_link_libraries(quickstep_client
+              glog
+              ${PROTOBUF3_LIBRARIES}
+              quickstep_cli_SingleNodeServer_proto
+              ${GRPCPLUSPLUS_LIBRARIES})
+endif()

@@ -24,9 +24,16 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "cli/cli_proto_gen/Cli.grpc.pb.h"
+#include "cli/cli_proto_gen/Cli.pb.h"
+
 #include "glog/logging.h"
+#include "gflags/gflags.h"
+#include "grpc/grpc.h"
 
 namespace quickstep {
+
+DECLARE_int32(port);
 
 /** \addtogroup CLI
  *  @{
@@ -34,17 +41,31 @@ namespace quickstep {
 
 class NetworkWrapper {
 public:
-  NetworkWrapper(int port);
+  NetworkWrapper(){}
 
-  ~NetworkWrapper();
+  virtual ~NetworkWrapper(){}
+  /**
+   * Blocking. Must not be called if a result was not returned.
+   * @return
+   */
+  virtual std::string getNextCommand() = 0;
+
+  virtual void returnResult(std::string result) = 0;
+};
+
+class TCPWrapper : public NetworkWrapper {
+public:
+  TCPWrapper(int port);
+
+  ~TCPWrapper();
 
   /**
    * Blocking. Must not be called if a result was not returned.
    * @return
    */
-  std::string getNextCommand();
+  std::string getNextCommand() override;
 
-  void returnResult(std::string result);
+  void returnResult(std::string result) override;
 
   /**
    * @return True if getNextCommand was called and a result has not yet been returned.
@@ -60,6 +81,21 @@ private:
   int socket_fd_;
   struct sockaddr_in server_addr_, client_addr_;
   int client_socket_fd_;
+};
+
+class GrpcWrapper : public NetworkWrapper {
+public:
+  GrpcWrapper(int port);
+
+  ~GrpcWrapper();
+
+  /**
+   * Blocking. Must not be called if a result was not returned.
+   * @return
+   */
+  std::string getNextCommand() override;
+
+  void returnResult(std::string result) override;
 };
 
 /** @} */

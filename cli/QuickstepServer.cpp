@@ -33,9 +33,6 @@
 #include "cli/CommandExecutor.hpp"
 #include "cli/DropRelation.hpp"
 
-
-#include "cli/LineReaderDumb.hpp"
-
 #ifdef QUICKSTEP_ENABLE_GOOGLE_PROFILER
 #include <gperftools/profiler.h>
 #endif
@@ -73,7 +70,7 @@
 #include "utility/StringUtil.hpp"
 
 #include "gflags/gflags.h"
-
+#include "grpc/grpc.h"
 #include "glog/logging.h"
 
 #include "tmb/id_typedefs.h"
@@ -147,21 +144,31 @@ namespace quickstep {
 
 }  // namespace quickstep
 
-// returns a pair: <quitting, reset_parser>
-std::pair<bool,bool> handleValidCommand(MessageBusImpl &bus,
+/**
+ * Executes a single command. Command is fed into the parser, and the result is printed to the given file buffer.
+ * @param bus TMB
+ * @param main_thread_client_id The ID of this thread in relation to the TMB
+ * @param storage_manager Storage Manager instance
+ * @param query_processor Query processor instance
+ * @param foreman Foreman thread instance
+ * @param statement The parsed, valid command statement
+ * @param outfile A write-out buffer
+ * @param errfile A write-out buffer
+ * @param command_string The original command, used for printing errors.
+ * @return A pair of bools: <quitting, reset_parser>.
+ */
+std::pair<bool,bool> executeCommand(MessageBusImpl &bus,
                         const client_id main_thread_client_id,
                         quickstep::StorageManager &storage_manager,
                         std::unique_ptr<QueryProcessor> &query_processor,
                         const ForemanSingleNode &foreman,
-                        ParseResult const &result,
+                        const ParseStatement &statement,
                         FILE* outfile,
                         FILE* errfile,
-                        std::string* command_string) {
+                        std::string const &command_string) {
   std::chrono::time_point<std::chrono::steady_clock> start, end;
   bool quitting = false;
   bool reset_parser = false;
-
-  const ParseStatement &statement = *result.parsed_statement;
   switch (statement.getStatementType()) {
     case ParseStatement::kQuit: {
       quitting = true;
@@ -180,7 +187,7 @@ std::pair<bool,bool> handleValidCommand(MessageBusImpl &bus,
           outfile);
       } catch (const quickstep::SqlError &sql_error) {
         fprintf(errfile, "%s",
-                sql_error.formatMessage(*command_string).c_str());
+                sql_error.formatMessage(command_string).c_str());
         reset_parser = true;
       }
       break;
@@ -204,7 +211,7 @@ std::pair<bool,bool> handleValidCommand(MessageBusImpl &bus,
           query_handle.release(),
           &bus);
       } catch (const quickstep::SqlError &sql_error) {
-        fprintf(errfile, "%s", sql_error.formatMessage(*command_string).c_str());
+        fprintf(errfile, "%s", sql_error.formatMessage(command_string).c_str());
         reset_parser = true;
         break;
       }
@@ -251,7 +258,7 @@ void loopUntilQuit(MessageBusImpl &bus,
                    quickstep::NetworkWrapper &network_wrapper,
                    std::unique_ptr<SqlParserWrapper> &parser_wrapper) {
   for (;;) {
-    string *command_string = new string();
+    std::string* command_string = new string();
     *command_string = network_wrapper.getNextCommand();
     if (command_string->size() == 0) {
       // empty line signals exit
@@ -262,7 +269,7 @@ void loopUntilQuit(MessageBusImpl &bus,
 
     // each command gets a file. These files are in-memory, and the interface is not
     // POSIX standard. Therefore, we should change the interface in the future.
-    LOG(INFO) << "Query received: " << command_string;
+    LOG(INFO) << "Query received: " << *command_string;
     MemStream outfile;
     MemStream errfile;
     parser_wrapper->feedNextBuffer(command_string);
@@ -272,18 +279,19 @@ void loopUntilQuit(MessageBusImpl &bus,
     // SqlError does not do the proper reset work of the YYABORT macro.
     bool reset_parser = false;
     for (;;) {
+      // Read all the commands in the command string.
       ParseResult result = parser_wrapper->getNextStatement();
       if (result.condition == ParseResult::kSuccess) {
         std::pair<bool, bool> execution_result =
-          handleValidCommand(bus,
-                             main_thread_client_id,
-                             storage_manager,
-                             query_processor,
-                             foreman,
-                             result,
-                             outfile.file(),
-                             errfile.file(),
-                             command_string);
+          executeCommand(bus,
+                         main_thread_client_id,
+                         storage_manager,
+                         query_processor,
+                         foreman,
+                         *result.parsed_statement,
+                         outfile.file(),
+                         errfile.file(),
+                         *command_string);
         quitting = execution_result.first;
         reset_parser = execution_result.second;
       } else {
@@ -297,7 +305,7 @@ void loopUntilQuit(MessageBusImpl &bus,
         break;
     }
 
-    // TODO formatting
+    // TODO should the messages have a particular formatting?
     std::string output_message(outfile.str());
     std::string err_message(errfile.str());
     network_wrapper.returnResult(output_message + (err_message.length() > 1 ? "\n" + err_message : ""));
@@ -308,14 +316,13 @@ void loopUntilQuit(MessageBusImpl &bus,
       parser_wrapper.reset(new SqlParserWrapper());
       reset_parser = false;
     }
-
-    //delete command_string; // TODO Smart pointer
   }
 }
 
 int main(int argc, char* argv[]) {
   google::InitGoogleLogging(argv[0]);
   gflags::ParseCommandLineFlags(&argc, &argv, true);
+  grpc_init();
 
   printf("Starting Quickstep with %d worker thread(s) and a %.2f GB buffer pool.\n",
          FLAGS_num_workers,
@@ -437,16 +444,16 @@ int main(int argc, char* argv[]) {
 
   foreman.start();
 
-  quickstep::NetworkWrapper network_wrapper(3000);
-
   std::unique_ptr<SqlParserWrapper> parser_wrapper(new SqlParserWrapper());
+
+  auto network_wrapper = std::make_unique<quickstep::GrpcWrapper>(quickstep::FLAGS_port);
 
   loopUntilQuit(bus,
                 main_thread_client_id,
                 storage_manager,
                 query_processor,
                 foreman,
-                network_wrapper,
+                *network_wrapper,
                 parser_wrapper);
 
   // Kill the foreman and workers.

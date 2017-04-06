@@ -18,7 +18,7 @@
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 if (ENABLE_DISTRIBUTED)
   add_subdirectory(distributed)
-endif(ENABLE_DISTRIBUTED)
+endif()
 add_subdirectory(tests)
 
 if (WIN32)
@@ -44,6 +44,20 @@ configure_file (
   "${CMAKE_CURRENT_BINARY_DIR}/CliConfig.h"
 )
 
+# Compile the protos for Single Node Server mode.
+if(ENABLE_SINGLE_NODE_SERVER)
+  # We will need some of the TMBs libraries
+  set(CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/third_party/src/tmb/cmake")
+
+  find_package(Grpc++ REQUIRED)
+  include_directories(${GRPCPLUSPLUS_INCLUDE_DIRS})
+
+  GRPC_GENERATE_CPP(cli_SingleNodeServer_proto_srcs
+                    cli_SingleNodeServer_proto_hdrs
+                    .
+                    SingleNodeServer.proto)
+endif()
+
 # Declare micro-libs and link dependencies:
 add_library(quickstep_cli_CommandExecutor CommandExecutor.cpp CommandExecutor.hpp)
 add_library(quickstep_cli_CommandExecutorUtil CommandExecutorUtil.cpp CommandExecutorUtil.hpp)
@@ -67,7 +81,13 @@ else()
               LineReaderDumb.hpp)
 endif()
 
-add_library(quickstep_cli_NetworkWrapper NetworkWrapper.cpp NetworkWrapper.hpp)
+if (ENABLE_SINGLE_NODE_SERVER)
+  add_library(quickstep_cli_SingleNodeServer_proto
+              ${cli_SingleNodeServer_proto_srcs}
+              ${cli_SingleNodeServer_proto_hdrs})
+  add_library(quickstep_cli_NetworkWrapper NetworkWrapper.cpp NetworkWrapper.hpp)
+endif()
+
 add_library(quickstep_cli_PrintToScreen PrintToScreen.cpp PrintToScreen.hpp)
 
 # Link dependencies:
@@ -151,9 +171,20 @@ if(USE_LINENOISE)
 else()
   target_link_libraries(quickstep_cli_LineReader
                         quickstep_utility_Macros)
+
 endif()
-target_link_libraries(quickstep_cli_PrintToScreen
-        ${GFLAGS_LIB_NAME})
+
+if(ENABLE_SINGLE_NODE_SERVER)
+  target_link_libraries(quickstep_cli_SingleNodeServer_proto
+                        ${PROTOBUF_LIBRARY}
+                        ${GRPCPLUSPLUS_LIBRARIES})
+  target_link_libraries(quickstep_cli_NetworkWrapper
+                        ${GFLAGS_LIB_NAME}
+                        ${PROTOBUF_LIBRARY}
+                        quickstep_cli_SingleNodeServer_proto
+                        ${GRPCPLUSPLUS_LIBRARIES})
+endif()
+
 target_link_libraries(quickstep_cli_PrintToScreen
                       ${GFLAGS_LIB_NAME}
                       quickstep_catalog_CatalogAttribute
