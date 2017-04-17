@@ -45,6 +45,8 @@ DECLARE_string(storage_path);
 
 DECLARE_bool(preload_buffer_pool);
 
+DECLARE_int32(port);
+
 /** @} */
 
 }  // namespace quickstep

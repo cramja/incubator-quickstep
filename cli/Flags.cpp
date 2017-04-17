@@ -87,4 +87,18 @@ DEFINE_bool(preload_buffer_pool, false,
             "accepting queries (should also set --buffer_pool_slots to be "
             "large enough to accomodate the entire database).");
 
+static bool ValidatePort(const char *flagname, std::int32_t value) {
+  int const min = 0, max = 65536;
+  if (value > min && value < max) {
+    return true;
+  }
+  std::cout << "Invalid value for --" << flagname << ": " << std::to_string(value)
+            << "\nUse ports between " << std::to_string(min) << " and "
+            << std::to_string(max) << std::endl;
+  return false;
+}
+
+DEFINE_int32(port, 3000, "Listens for TCP connection on this port when network mode is enabled.");
+DEFINE_validator(port, &ValidatePort);
+
 }  // namespace quickstep

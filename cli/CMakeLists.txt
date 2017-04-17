@@ -15,7 +15,6 @@
 # specific language governing permissions and limitations
 # under the License.
 
-include_directories(${CMAKE_CURRENT_BINARY_DIR})
 if (ENABLE_DISTRIBUTED)
   add_subdirectory(distributed)
 endif(ENABLE_DISTRIBUTED)
@@ -39,10 +38,30 @@ if (ENABLE_GOOGLE_PROFILER)
   set(QUICKSTEP_ENABLE_GOOGLE_PROFILER TRUE)
 endif()
 
+if (ENABLE_NETWORK_CLI)
+  set(QUICKSTEP_ENABLE_NETWORK_CLI TRUE)
+endif()
+
 configure_file (
   "${CMAKE_CURRENT_SOURCE_DIR}/CliConfig.h.in"
   "${CMAKE_CURRENT_BINARY_DIR}/CliConfig.h"
 )
+
+# Compile the protos for Single Node Server mode.
+if(ENABLE_NETWORK_CLI)
+  # We will need some of the TMBs libraries
+  set(CMAKE_MODULE_PATH
+      ${CMAKE_MODULE_PATH}
+      "${PROJECT_SOURCE_DIR}/third_party/src/tmb/cmake")
+
+  find_package(Grpc++ REQUIRED)
+  include_directories(${GRPCPLUSPLUS_INCLUDE_DIRS})
+
+  GRPC_GENERATE_CPP(cli_NetworkCli_proto_srcs
+                    cli_NetworkCli_proto_hdrs
+                    .
+                    NetworkCli.proto)
+endif()
 
 # Declare micro-libs and link dependencies:
 add_library(quickstep_cli_CommandExecutor CommandExecutor.cpp CommandExecutor.hpp)
@@ -51,6 +70,7 @@ add_library(quickstep_cli_Constants ../empty_src.cpp Constants.hpp)
 add_library(quickstep_cli_DefaultsConfigurator DefaultsConfigurator.cpp DefaultsConfigurator.hpp)
 add_library(quickstep_cli_DropRelation DropRelation.cpp DropRelation.hpp)
 add_library(quickstep_cli_Flags Flags.cpp Flags.hpp)
+add_library(quickstep_cli_IOInterface ../empty_src.cpp IOInterface.hpp)
 add_library(quickstep_cli_InputParserUtil InputParserUtil.cpp InputParserUtil.hpp)
 
 if(USE_LINENOISE)
@@ -65,6 +85,25 @@ else()
               LineReaderDumb.cpp
               LineReader.hpp
               LineReaderDumb.hpp)
+endif()
+
+add_library(quickstep_cli_LineReaderBuffered
+            LineReaderBuffered.cpp
+            LineReaderBuffered.hpp)
+add_library(quickstep_cli_LocalIO
+            ../empty_src.cpp
+            LocalIO.hpp)
+
+if (ENABLE_NETWORK_CLI)
+  add_library(quickstep_cli_NetworkCli_proto
+              ${cli_NetworkCli_proto_srcs}
+              ${cli_NetworkCli_proto_hdrs})
+  add_library(quickstep_cli_NetworkCliClient
+              ../empty_src.cpp
+              NetworkCliClient.hpp)
+  add_library(quickstep_cli_NetworkIO
+              ../empty_src.cpp
+              NetworkIO.hpp)
 endif()
 
 add_library(quickstep_cli_PrintToScreen PrintToScreen.cpp PrintToScreen.hpp)
@@ -150,6 +189,34 @@ if(USE_LINENOISE)
 else()
   target_link_libraries(quickstep_cli_LineReader
                         quickstep_utility_Macros)
+
+endif()
+target_link_libraries(quickstep_cli_LineReaderBuffered
+                      quickstep_cli_LineReader)
+target_link_libraries(quickstep_cli_LocalIO
+                      quickstep_cli_LineReader
+                      quickstep_cli_IOInterface)
+if(ENABLE_NETWORK_CLI)
+  target_link_libraries(quickstep_cli_NetworkCli_proto
+                        ${GRPCPLUSPLUS_LIBRARIES}
+                        ${PROTOBUF3_LIBRARY})
+  target_link_libraries(quickstep_cli_NetworkCliClient
+                        ${GFLAGS_LIB_NAME}
+                        ${GRPCPLUSPLUS_LIBRARIES}
+                        ${PROTOBUF3_LIBRARIES}
+                        glog
+                        quickstep_cli_NetworkCli_proto)
+  target_link_libraries(quickstep_cli_NetworkIO
+                        ${GFLAGS_LIB_NAME}
+                        ${GRPCPLUSPLUS_LIBRARIES}
+                        ${PROTOBUF3_LIBRARIES}
+                        glog
+                        quickstep_cli_Flags
+                        quickstep_cli_IOInterface
+                        quickstep_cli_NetworkCli_proto
+                        quickstep_threading_ConditionVariable
+                        quickstep_threading_Mutex
+                        quickstep_utility_MemStream)
 endif()
 target_link_libraries(quickstep_cli_PrintToScreen
                       ${GFLAGS_LIB_NAME}
@@ -176,5 +243,14 @@ target_link_libraries(quickstep_cli
                       quickstep_cli_DropRelation
                       quickstep_cli_Flags
                       quickstep_cli_InputParserUtil
+                      quickstep_cli_IOInterface
                       quickstep_cli_LineReader
+                      quickstep_cli_LineReaderBuffered
+                      quickstep_cli_LocalIO
                       quickstep_cli_PrintToScreen)
+if(ENABLE_NETWORK_CLI)
+  target_link_libraries(quickstep_cli
+                        quickstep_cli_NetworkCli_proto
+                        quickstep_cli_NetworkCliClient
+                        quickstep_cli_NetworkIO)
+endif()

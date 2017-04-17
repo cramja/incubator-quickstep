@@ -75,6 +75,7 @@ before_script:
            -D CMAKE_C_COMPILER=$CC
            -D CMAKE_CXX_COMPILER=$CXX
            -D CMAKE_LINKER=$CLINKER
+           -D ENABLE_NETWORK_CLI=false
            -D USE_TCMALLOC=0
            -D VECTOR_COPY_ELISION_LEVEL=$VECTOR_COPY_ELISION_LEVEL ..)
 

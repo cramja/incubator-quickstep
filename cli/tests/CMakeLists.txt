@@ -32,6 +32,17 @@ if (ENABLE_DISTRIBUTED)
                  "${PROJECT_SOURCE_DIR}/utility/textbased_test/TextBasedTest.hpp")
 endif(ENABLE_DISTRIBUTED)
 
+if (ENABLE_SINGLE_NODE_SERVER)
+  set(CMAKE_MODULE_PATH
+      ${CMAKE_MODULE_PATH}
+      "${PROJECT_SOURCE_DIR}/third_party/src/tmb/cmake")
+
+  find_package(Grpc++ REQUIRED)
+
+  add_executable(NetworkIO_unittest
+                 NetworkIO_unittest.cpp)
+endif()
+
 target_link_libraries(quickstep_cli_tests_CommandExecutorTest
                       glog
                       gtest
@@ -90,3 +101,18 @@ if (ENABLE_DISTRIBUTED)
                         ${GFLAGS_LIB_NAME}
                         ${LIBS})
 endif(ENABLE_DISTRIBUTED)
+if (ENABLE_SINGLE_NODE_SERVER)
+  target_link_libraries(NetworkIO_unittest
+                        ${GFLAGS_LIB_NAME}
+                        ${GRPCPLUSPLUS_LIBRARIES}
+                        glog
+                        gtest
+                        quickstep_cli_Flags
+                        quickstep_cli_LineReaderBuffered
+                        quickstep_cli_NetworkCliClient
+                        quickstep_cli_NetworkIO
+                        quickstep_threading_ConditionVariable
+                        quickstep_threading_Mutex
+                        quickstep_threading_Thread)
+  add_test(NetworkIO_unittest NetworkIO_unittest)
+endif()
