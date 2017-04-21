@@ -27,10 +27,10 @@
 #include "cli/Flags.hpp"
 #include "cli/LineReaderBuffered.hpp"
 #include "cli/NetworkCliClient.hpp"
+#include "cli/NetworkIO.hpp"
+
 
 #include "gflags/gflags.h"
-
-DECLARE_int32(port);
 
 using quickstep::LineReaderBuffered;
 using quickstep::NetworkCliClient;
@@ -41,7 +41,7 @@ int main(int argc, char **argv) {
 
   // Attempts to send a single query retrieved from stdin to the Quickstep Server.
   NetworkCliClient qs_client(
-    grpc::CreateChannel("localhost:" + std::to_string(quickstep::FLAGS_port),
+    grpc::CreateChannel(quickstep::NetworkIO::GetAddress(),
                         grpc::InsecureChannelCredentials()));
 
   // Read stdin until EOF, then we use a Line reader to divide query into parts.
@@ -53,7 +53,7 @@ int main(int argc, char **argv) {
   linereader.setBuffer(user_queries);
   while (!linereader.bufferEmpty()) {
     std::string query = linereader.getNextCommand();
-    if (query.size() > 1) {
+    if (!query.empty()) {
       std::cout << query << std::endl;
       std::cout << qs_client.Query(query) << std::endl;
     }

@@ -20,43 +20,63 @@
 #ifndef QUICKSTEP_CLI_IO_INTERFACE_HPP_
 #define QUICKSTEP_CLI_IO_INTERFACE_HPP_
 
+#include <cstdio>
 #include <string>
 
+#include "utility/Macros.hpp"
+
+namespace quickstep {
+
 /**
- * Virtual base defines a generic, file-based interface around IO.
+ * An individual IO interaction with Quickstep.
+ */
+class IOHandle {
+ public:
+  IOHandle() {}
+
+  /**
+   * @note Destructor should handle clean up of any IO state.
+   */
+  virtual ~IOHandle() {}
+
+  /**
+   * @return A file handle for standard output.
+   */
+  virtual FILE *out() = 0;
+
+  /**
+   * @return A file handle for error output.
+   */
+  virtual FILE *err() = 0;
+
+  virtual std::string getCommand() = 0;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(IOHandle);
+};
+
+/**
+ * Virtual base defines a generic, file-based interface around IO. One IO interaction (eg a SQL query) will be assigned
+ * an IOHandle. On destruction of the IOHandle, the IO interaction has finished.
  */
 class IOInterface {
  public:
   IOInterface() {}
 
   /**
-   * @return A file handle for standard output.
+   * @note Destructing the IOInterface should close any outstanding IO state (eg an open port).
    */
-  virtual FILE* out() = 0;
+  virtual ~IOInterface() {}
 
   /**
-   * @return A file handle for error output.
+   * @brief Retrieves the next IOHandle. Blocks if no IO ready.
+   * @return An IOHandle.
    */
-  virtual FILE* err() = 0;
-
-  /**
-   * @brief Requests a complete SQL command.
-   * This call may block until user input is given.
-   * @note When the command is complete, commandComplete() should be called so that certain implementations can clean
-   *    up state related to sending the command.
-   * @return A string containing a quickstep command.
-   */
-  virtual std::string getNextCommand() = 0;
-
-  /**
-   * @brief Notifies the IO system that the previously acquired command is complete.
-   */
-  virtual void notifyCommandComplete() {}
-
-  /**
-   * @brief Notifies the IO system that quickstep is shutting down.
-   */
-  virtual void notifyShutdown() {}
+  virtual IOHandle* getNextIOHandle() = 0;
+ private:
+  DISALLOW_COPY_AND_ASSIGN(IOInterface);
 };
+
+}  // namespace quickstep
 
 #endif  // QUICKSTEP_CLI_IO_INTERFACE_HPP_

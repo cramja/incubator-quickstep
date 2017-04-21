@@ -25,8 +25,8 @@ namespace quickstep {
 
 LineReaderBuffered::LineReaderBuffered(const std::string &default_prompt,
                                        const std::string &continue_prompt)
-  : LineReader("", ""),
-    buffer_empty_(true) { }
+    : LineReader(default_prompt, continue_prompt),
+      buffer_empty_(true) {}
 
 LineReaderBuffered::LineReaderBuffered() : LineReader("", ""), buffer_empty_(true) { }
 

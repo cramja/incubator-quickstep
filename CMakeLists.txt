@@ -798,13 +798,14 @@ if (ENABLE_DISTRIBUTED)
                         ${GRPCPLUSPLUS_LIBRARIES})
 endif(ENABLE_DISTRIBUTED)
 
-if(ENABLE_NETWORK_CLI)
+if (ENABLE_NETWORK_CLI)
   add_executable (quickstep_client cli/NetworkCliClientMain.cpp)
   target_link_libraries(quickstep_client
-            ${GFLAGS_LIB_NAME}
-            ${GRPCPLUSPLUS_LIBRARIES}
-            glog
-            quickstep_cli_Flags
-            quickstep_cli_LineReaderBuffered
-            quickstep_cli_NetworkCliClient)
+                        ${GFLAGS_LIB_NAME}
+                        ${GRPCPLUSPLUS_LIBRARIES}
+                        glog
+                        quickstep_cli_Flags
+                        quickstep_cli_LineReaderBuffered
+                        quickstep_cli_NetworkCliClient
+                        quickstep_cli_NetworkIO)
 endif()

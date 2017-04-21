@@ -23,6 +23,7 @@
 #include <string>
 
 #include "cli/LineReader.hpp"
+#include "utility/Macros.hpp"
 
 namespace quickstep {
 
@@ -41,7 +42,7 @@ class LineReaderBuffered : public LineReader {
 
   LineReaderBuffered();
 
-  ~LineReaderBuffered() {}
+  ~LineReaderBuffered() override {}
 
   /**
    * @brief Replaces the current buffer contents with new contents.
@@ -68,6 +69,7 @@ class LineReaderBuffered : public LineReader {
 
   DISALLOW_COPY_AND_ASSIGN(LineReaderBuffered);
 };
+
 }  // namespace quickstep
 
 #endif  // QUICKSTEP_CLI_LINE_READER_BUFFERED_HPP_

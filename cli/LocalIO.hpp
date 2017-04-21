@@ -26,7 +26,6 @@
 #include "cli/CliConfig.h"
 #include "cli/IOInterface.hpp"
 #include "cli/LineReader.hpp"
-
 #ifdef QUICKSTEP_USE_LINENOISE
 #include "cli/LineReaderLineNoise.hpp"
 typedef quickstep::LineReaderLineNoise LineReaderImpl;
@@ -34,39 +33,54 @@ typedef quickstep::LineReaderLineNoise LineReaderImpl;
 #include "cli/LineReaderDumb.hpp"
 typedef quickstep::LineReaderDumb LineReaderImpl;
 #endif
+#include "utility/Macros.hpp"
 
 namespace quickstep {
 
-class LocalIO : public IOInterface {
+class LocalIOHandle : public IOHandle {
  public:
-  LocalIO() : IOInterface(), line_reader_("quickstep> ", "      ...> ") {}
+  LocalIOHandle() : IOHandle(), command_("") {}
 
-  /**
-   * @return A file handle for standard output.
-   */
+  explicit LocalIOHandle(std::string const & command)
+      : IOHandle(),
+        command_(command) {}
+
+  ~LocalIOHandle() {}
+
   FILE *out() override {
     return stdout;
   }
 
-  /**
-   * @return A file handle for error output.
-   */
   FILE *err() override {
     return stderr;
   }
 
-  /**
-   * Requests a complete SQL command. This call may block until user input is given.
-   * @note When the command is complete, commandComplete() should be called so that certain implementations can clean
-   *    up state related to sending the command.
-   * @return A string containing a quickstep command.
-   */
-  std::string getNextCommand() override {
-    return line_reader_.getNextCommand();
+  std::string getCommand() override {
+    return command_;
+  }
+
+ private:
+  std::string command_;
+
+  DISALLOW_COPY_AND_ASSIGN(LocalIOHandle);
+};
+
+/**
+ * IO class for getting commands from stdin via an interactive line reader.
+ */
+class LocalIO : public IOInterface {
+ public:
+  LocalIO() : line_reader_("quickstep> ",
+                           "      ...> ") {}
+
+  IOHandle* getNextIOHandle() override {
+    return new LocalIOHandle(line_reader_.getNextCommand());
   }
 
  private:
   LineReaderImpl line_reader_;
+
+  DISALLOW_COPY_AND_ASSIGN(LocalIO);
 };
 
 }  // namespace quickstep

@@ -92,13 +92,20 @@ static bool ValidatePort(const char *flagname, std::int32_t value) {
   if (value > min && value < max) {
     return true;
   }
-  std::cout << "Invalid value for --" << flagname << ": " << std::to_string(value)
-            << "\nUse ports between " << std::to_string(min) << " and "
-            << std::to_string(max) << std::endl;
+  std::cout << "Invalid value for --" << flagname << ": " << value
+            << "\nUse ports between " << min << " and "
+            << max << std::endl;
   return false;
 }
 
-DEFINE_int32(port, 3000, "Listens for TCP connection on this port when network mode is enabled.");
-DEFINE_validator(port, &ValidatePort);
+DEFINE_int32(cli_network_port, 3000,
+             "Listens for TCP connections on this port when network mode is enabled. "
+             "This is only used if the cli is set to use the network mode (--mode=network).");
+DEFINE_validator(cli_network_port, &ValidatePort);
+
+DEFINE_string(cli_network_ip, "localhost",
+              "The ip address which the cli should open a connection on. This is only used "
+              "if the cli is set to use the network mode (--mode=network). Defaults to "
+              "the address of localhost.");
 
 }  // namespace quickstep

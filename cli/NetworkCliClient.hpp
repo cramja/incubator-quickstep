@@ -29,6 +29,7 @@
 
 #include "cli/NetworkCli.grpc.pb.h"
 #include "cli/NetworkCli.pb.h"
+#include "utility/Macros.hpp"
 
 #include "gflags/gflags.h"
 #include "glog/logging.h"
@@ -44,8 +45,8 @@ namespace quickstep {
  */
 class NetworkCliClient {
  public:
-  explicit NetworkCliClient(std::shared_ptr<Channel> const &channel)
-    : stub_(NetworkCli::NewStub(channel)) {}
+  explicit NetworkCliClient(const std::shared_ptr<Channel> &channel)
+      : stub_(NetworkCli::NewStub(channel)) {}
 
   /**
    * Assembles the client's payload, sends it and presents the response back from the server.
@@ -68,7 +69,7 @@ class NetworkCliClient {
     }
   }
 
-  Status SendQuery(QueryRequest request, QueryResponse* response) {
+  Status SendQuery(const QueryRequest& request, QueryResponse* response) {
     ClientContext context;
     return stub_->SendQuery(&context, request, response);
   }
@@ -84,6 +85,8 @@ class NetworkCliClient {
   }
 
   std::unique_ptr<NetworkCli::Stub> stub_;
+
+  DISALLOW_COPY_AND_ASSIGN(NetworkCliClient);
 };
 
 }  // namespace quickstep

@@ -45,7 +45,9 @@ DECLARE_string(storage_path);
 
 DECLARE_bool(preload_buffer_pool);
 
-DECLARE_int32(port);
+DECLARE_int32(cli_network_port);
+
+DECLARE_string(cli_network_ip);
 
 /** @} */
 

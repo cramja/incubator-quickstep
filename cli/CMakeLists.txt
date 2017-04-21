@@ -48,7 +48,7 @@ configure_file (
 )
 
 # Compile the protos for Single Node Server mode.
-if(ENABLE_NETWORK_CLI)
+if (ENABLE_NETWORK_CLI)
   # We will need some of the TMBs libraries
   set(CMAKE_MODULE_PATH
       ${CMAKE_MODULE_PATH}
@@ -174,6 +174,8 @@ target_link_libraries(quickstep_cli_Flags
                       quickstep_cli_DefaultsConfigurator
                       quickstep_storage_StorageConstants
                       ${GFLAGS_LIB_NAME})
+target_link_libraries(quickstep_cli_IOInterface
+                      quickstep_utility_Macros)
 target_link_libraries(quickstep_cli_InputParserUtil
                       glog
                       quickstep_utility_Macros
@@ -189,14 +191,15 @@ if(USE_LINENOISE)
 else()
   target_link_libraries(quickstep_cli_LineReader
                         quickstep_utility_Macros)
-
 endif()
 target_link_libraries(quickstep_cli_LineReaderBuffered
-                      quickstep_cli_LineReader)
+                      quickstep_cli_LineReader
+                      quickstep_utility_Macros)
 target_link_libraries(quickstep_cli_LocalIO
                       quickstep_cli_LineReader
-                      quickstep_cli_IOInterface)
-if(ENABLE_NETWORK_CLI)
+                      quickstep_cli_IOInterface
+                      quickstep_utility_Macros)
+if (ENABLE_NETWORK_CLI)
   target_link_libraries(quickstep_cli_NetworkCli_proto
                         ${GRPCPLUSPLUS_LIBRARIES}
                         ${PROTOBUF3_LIBRARY})
@@ -205,7 +208,8 @@ if(ENABLE_NETWORK_CLI)
                         ${GRPCPLUSPLUS_LIBRARIES}
                         ${PROTOBUF3_LIBRARIES}
                         glog
-                        quickstep_cli_NetworkCli_proto)
+                        quickstep_cli_NetworkCli_proto
+                        quickstep_utility_Macros)
   target_link_libraries(quickstep_cli_NetworkIO
                         ${GFLAGS_LIB_NAME}
                         ${GRPCPLUSPLUS_LIBRARIES}
@@ -216,7 +220,9 @@ if(ENABLE_NETWORK_CLI)
                         quickstep_cli_NetworkCli_proto
                         quickstep_threading_ConditionVariable
                         quickstep_threading_Mutex
-                        quickstep_utility_MemStream)
+                        quickstep_utility_Macros
+                        quickstep_utility_MemStream
+                        quickstep_utility_ThreadSafeQueue)
 endif()
 target_link_libraries(quickstep_cli_PrintToScreen
                       ${GFLAGS_LIB_NAME}
@@ -248,7 +254,7 @@ target_link_libraries(quickstep_cli
                       quickstep_cli_LineReaderBuffered
                       quickstep_cli_LocalIO
                       quickstep_cli_PrintToScreen)
-if(ENABLE_NETWORK_CLI)
+if (ENABLE_NETWORK_CLI)
   target_link_libraries(quickstep_cli
                         quickstep_cli_NetworkCli_proto
                         quickstep_cli_NetworkCliClient

@@ -19,24 +19,24 @@
 
 #include <cstddef>
 #include <cstdio>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "cli/Flags.hpp"
 #include "cli/LineReaderBuffered.hpp"
 #include "cli/NetworkCliClient.hpp"
 #include "cli/NetworkIO.hpp"
-#include "threading/ConditionVariable.hpp"
-#include "threading/Mutex.hpp"
 #include "threading/Thread.hpp"
+#include "utility/Macros.hpp"
 
+#include "gflags/gflags.h"
 #include "glog/logging.h"
 #include "gtest/gtest.h"
 
-using std::unique_ptr;
-
 namespace quickstep {
+
+using networkio_internal::RequestState;
 
 static std::string const kQueryRequest = "O Captain! My Captain!";
 static std::string const kQueryResponse = "Our fearful trip is done,";
@@ -46,10 +46,7 @@ static std::string const kQueryResponse = "Our fearful trip is done,";
  */
 class TestNetworkIO {
  public:
-  TestNetworkIO()
-      : service_(),
-        server_address_("localhost:" + std::to_string(FLAGS_port)),
-        server_(nullptr) {
+  TestNetworkIO() : server_address_(NetworkIO::GetAddress()) {
     grpc::ServerBuilder builder;
     builder.AddListeningPort(server_address_, grpc::InsecureServerCredentials());
     builder.RegisterService(&service_);
@@ -58,85 +55,83 @@ class TestNetworkIO {
     LOG(INFO) << "TestSingleNodeServer listening on " << server_address_;
   }
 
-  // Gets a message from the Service worker.
-  std::string getSentMessage() {
-    networkio_internal::RequestState& requestState = service_.getRequestState();
-    std::unique_lock<std::mutex> lock(requestState.mutex_);
-    while (!requestState.request_ready_)
-      requestState.condition_.wait(lock);
-
-    EXPECT_EQ(requestState.request_ready_, true);
-    EXPECT_EQ(requestState.response_ready_, false);
-
-    return requestState.request_buffer_;
-  }
-
-  // Sets the response message of the Service worker. Alerts it that the request is ready.
-  void setResponse(std::string response) {
-    networkio_internal::RequestState& requestState = service_.getRequestState();
-    requestState.response_message_.set_query_result(response);
-
-    EXPECT_EQ(requestState.response_ready_, false);
-
-    requestState.responseReady();
-  }
-
-  NetworkCliServiceImpl& getService() {
-    return service_;
-  }
-
   ~TestNetworkIO() {
     service_.kill();
     server_->Shutdown();
     server_->Wait();
   }
 
+  /**
+   * @brief Waits on the service for a sent message.
+   */
+  std::string getSentMessage() {
+    CHECK(current_request_ == nullptr);
+    current_request_ = service_.waitForRequest();
+    EXPECT_EQ(current_request_->getCanceled(), false);
+    return current_request_->getRequest();
+  }
+
+  /**
+   * @brief Sets the response message of the Service worker. Alerts it that the request is ready.
+   */
+  void setResponse(std::string response) {
+    CHECK_NOTNULL(current_request_);
+    current_request_->responseReady(response, std::string(""));
+    current_request_ = nullptr;
+  }
+
+  NetworkCliServiceImpl& getService() {
+    return service_;
+  }
+
  private:
   NetworkCliServiceImpl service_;
   std::string server_address_;
   std::unique_ptr<grpc::Server> server_;
+  RequestState* current_request_;
+
+  DISALLOW_COPY_AND_ASSIGN(TestNetworkIO);
 };
 
 /**
- * Tests that killing the service will cancel requests.
+ * We will pass this thread a lambda based on the desired server interactions.
  */
-TEST(NetworkIOTest, TestShutdown) {
-  TestNetworkIO server;
+class HelperThread : public Thread {
+ public:
+  explicit HelperThread(std::function<void(void)> function) : function_(function) {}
 
-  server.getService().kill();
+ protected:
+  void run() override {
+    function_();
+  }
 
-  NetworkCliClient client(
-    grpc::CreateChannel("localhost:" + std::to_string(FLAGS_port),
-                        grpc::InsecureChannelCredentials()));
-  QueryRequest request;
-  request.set_query(kQueryRequest);
-  QueryResponse response;
-  Status status = client.SendQuery(request, &response);
-  ASSERT_EQ(status.error_code(), grpc::CANCELLED);
-}
+ private:
+  std::function<void(void)> function_;
+
+  DISALLOW_COPY_AND_ASSIGN(HelperThread);
+};
 
 /**
  * Tests a simple call and response to the Service.
  */
 TEST(NetworkIOTest, TestNetworkIOCommandInteraction) {
   NetworkIO networkIO;
-  std::string const query_stmt = kQueryRequest + ";" + kQueryRequest;
 
   // This thread will handle the response from the client in a similar way as the quickstep cli will.
-  std::thread server_handler([&networkIO, &query_stmt]() {
-    std::string command = networkIO.getNextCommand();
-    EXPECT_EQ(command, query_stmt);
+  HelperThread server_handler([&networkIO]() {
+    std::unique_ptr<IOHandle> command(networkIO.getNextIOHandle());
+    EXPECT_EQ(command->getCommand(), kQueryRequest);
 
-    // Set some output for the main test thread, return.
-    fprintf(networkIO.out(), "%s", kQueryResponse.c_str());
-    networkIO.notifyCommandComplete();
+    // Set some output for the main test thread, destruction of the handle will return the request.
+    fprintf(command->out(), "%s", kQueryResponse.c_str());
   });
+  server_handler.start();
 
   NetworkCliClient client(
-    grpc::CreateChannel("localhost:" + std::to_string(FLAGS_port),
+    grpc::CreateChannel(NetworkIO::GetAddress(),
                         grpc::InsecureChannelCredentials()));
   QueryRequest request;
-  request.set_query(query_stmt);
+  request.set_query(kQueryRequest);
   QueryResponse response;
   Status status = client.SendQuery(request, &response);
   ASSERT_TRUE(status.ok());
@@ -146,31 +141,39 @@ TEST(NetworkIOTest, TestNetworkIOCommandInteraction) {
   server_handler.join();
 }
 
-TEST(NetworkIOTest, TestLineReaderBuffered) {
-  // The buffered line reader is used exclusively by the NetworkIO's client.
-  LineReaderBuffered linereader;
-  EXPECT_TRUE(linereader.bufferEmpty());
+/**
+ * Tests that killing the service will cancel requests.
+ */
+TEST(NetworkIOTest, TestShutdown) {
+  // Start a server:
+  NetworkIO networkIO;
 
-  std::string stmt = "select * from foo;";
-  std::string stmts = stmt + "select 1; select 2; quit;";
-  auto const num_stmts = std::count(stmts.begin(), stmts.end(), ';');
-  linereader.setBuffer(stmts);
-  ASSERT_FALSE(linereader.bufferEmpty());
+  std::function<void(void)> send_request_fn([]() {
+    // Create a request, and, on return it should be canceled.
+    NetworkCliClient client(grpc::CreateChannel(NetworkIO::GetAddress(),
+                            grpc::InsecureChannelCredentials()));
+    QueryRequest request;
+    request.set_query(kQueryRequest);
+    QueryResponse response;
+    Status status = client.SendQuery(request, &response);
+    EXPECT_EQ(grpc::OK, status.error_code());
 
-  std::vector<std::string> stmts_vec;
-  int parsed_commands;
-  for (parsed_commands = 0;
-      parsed_commands < num_stmts + 1 && !linereader.bufferEmpty();
-      parsed_commands++) {
-    std::string command = linereader.getNextCommand();
-    if (command != "") {
-      stmts_vec.push_back(command);
-    }
+    // Server will kill the next request.
+    status = client.SendQuery(request, &response);
+    EXPECT_EQ(grpc::CANCELLED, status.error_code());
+  });
+
+  HelperThread client_thread(send_request_fn);
+  client_thread.start();
+
+  {
+    std::unique_ptr<IOHandle> ioHandle(networkIO.getNextIOHandle());
+    EXPECT_EQ(ioHandle->getCommand(), kQueryRequest);
+    // Killing the service should cause the response the client thread receives to be canceled.
+    networkIO.getService().kill();
   }
 
-  EXPECT_EQ(stmt, stmts_vec.front());
-  EXPECT_EQ(num_stmts, stmts_vec.size());
-  EXPECT_TRUE(linereader.bufferEmpty());
+  client_thread.join();
 }
 
 }  // namespace quickstep
@@ -178,5 +181,6 @@ TEST(NetworkIOTest, TestLineReaderBuffered) {
 int main(int argc, char** argv) {
   google::InitGoogleLogging(argv[0]);
   ::testing::InitGoogleTest(&argc, argv);
+  gflags::ParseCommandLineFlags(&argc, &argv, true);
   return RUN_ALL_TESTS();
 }
